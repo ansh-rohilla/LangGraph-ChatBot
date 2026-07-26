@@ -19,5 +19,10 @@ myenv/
 # Streamlit local files
 .streamlit/secrets.toml
 
+# Local SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
 # OS files
 .DS_Store
