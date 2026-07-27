@@ -1,7 +1,13 @@
 import streamlit as st
-from langgraph_database_backend import chatbot, retrieve_all_threads
-from langchain_core.messages import HumanMessage
 import uuid
+
+from langgraph_database_backend import chatbot, retrieve_all_threads
+
+from langchain_core.messages import (
+    HumanMessage,
+    AIMessage,
+    ToolMessage,
+)
 
 # *********************************** Utility Functions ******************************
 
@@ -26,10 +32,37 @@ def load_conversation(thread_id):
     state = chatbot.get_state(
         config={"configurable": {"thread_id": thread_id}}
     )
-    return state.values.get("messages", [])
+
+    messages = state.values.get("messages", [])
+
+    conversation = []
+
+    for msg in messages:
+
+        # Ignore raw tool output
+        if isinstance(msg, ToolMessage):
+            continue
+
+        # Ignore AI messages that only contain tool calls
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            continue
+
+        if isinstance(msg, HumanMessage):
+            role = "user"
+        else:
+            role = "assistant"
+
+        conversation.append(
+            {
+                "role": role,
+                "content": msg.content,
+            }
+        )
+
+    return conversation
 
 
-# ******************************** Session Setup *********************************
+# ******************************** Session State *********************************
 
 if "message_history" not in st.session_state:
     st.session_state["message_history"] = []
@@ -40,13 +73,13 @@ if "thread_id" not in st.session_state:
 if "chat_threads" not in st.session_state:
     st.session_state["chat_threads"] = retrieve_all_threads()
 
-# NEW: Store conversation titles
 if "chat_titles" not in st.session_state:
     st.session_state["chat_titles"] = {}
 
 add_thread(st.session_state["thread_id"])
 
-# ******************************** Side Bar UI *********************************
+
+# ******************************** Sidebar *********************************
 
 st.sidebar.title("LangGraph ChatBot")
 
@@ -57,47 +90,42 @@ st.sidebar.header("My Conversations")
 
 for thread_id in st.session_state["chat_threads"][::-1]:
 
-    title = st.session_state["chat_titles"].get(thread_id, "New Chat")
+    title = st.session_state["chat_titles"].get(
+        thread_id,
+        "New Chat",
+    )
 
     if st.sidebar.button(title, key=str(thread_id)):
         st.session_state["thread_id"] = thread_id
+        st.session_state["message_history"] = load_conversation(thread_id)
+        st.rerun()
 
-        messages = load_conversation(thread_id)
-
-        temp_messages = []
-
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                role = "user"
-            else:
-                role = "assistant"
-
-            temp_messages.append(
-                {
-                    "role": role,
-                    "content": msg.content,
-                }
-            )
-
-        st.session_state["message_history"] = temp_messages
 
 # ******************************** Main UI *********************************
 
-# Display previous conversation
+st.title("💬 LangGraph ChatBot")
+
+# Display previous messages
+
 for message in st.session_state["message_history"]:
     with st.chat_message(message["role"]):
-        st.write(message["content"])
+        st.markdown(message["content"])
 
-user_input = st.chat_input("Type Here")
+
+user_input = st.chat_input("Type your message...")
+
 
 if user_input:
 
-    # ------------------- NEW -------------------
-    # Set conversation title from first user message
+    # ---------------- Conversation Title ---------------- #
+
     if (
-        st.session_state["chat_titles"][st.session_state["thread_id"]]
+        st.session_state["chat_titles"][
+            st.session_state["thread_id"]
+        ]
         == "New Chat"
     ):
+
         title = user_input.strip()
 
         if len(title) > 30:
@@ -106,9 +134,9 @@ if user_input:
         st.session_state["chat_titles"][
             st.session_state["thread_id"]
         ] = title
-    # -------------------------------------------
 
-    # Show user message
+    # ---------------- User Message ---------------- #
+
     st.session_state["message_history"].append(
         {
             "role": "user",
@@ -117,28 +145,48 @@ if user_input:
     )
 
     with st.chat_message("user"):
-        st.write(user_input)
+        st.markdown(user_input)
 
     CONFIG = {
         "configurable": {
             "thread_id": st.session_state["thread_id"]
-        }
+        },
+        "metadata": {
+            "thread_id": st.session_state["thread_id"]
+        },
+        "run_name": "chat_turn",
     }
 
-    with st.chat_message("assistant"):
+    # ---------------- Assistant ---------------- #
 
-        ai_message = st.write_stream(
-            message_chunk.content
-            for message_chunk, metadata in chatbot.stream(
-                {"messages": [HumanMessage(content=user_input)]},
-                config=CONFIG,
-                stream_mode="messages",
-            )
-        )
+    def assistant_response():
+
+        final_answer = ""
+
+        for message, metadata in chatbot.stream(
+            {"messages": [HumanMessage(content=user_input)]},
+            config=CONFIG,
+            stream_mode="messages",
+        ):
+
+            # Skip tool output
+            if isinstance(message, ToolMessage):
+                continue
+
+            # Skip tool-calling AI message
+            if isinstance(message, AIMessage) and message.tool_calls:
+                continue
+
+            if message.content:
+                final_answer += message.content
+                yield message.content
+
+    with st.chat_message("assistant"):
+        ai_response = st.write_stream(assistant_response())
 
     st.session_state["message_history"].append(
         {
             "role": "assistant",
-            "content": ai_message,
+            "content": ai_response,
         }
     )
