@@ -1,14 +1,23 @@
-from langgraph.graph import StateGraph, START
-from typing import TypedDict, Annotated
-from langchain_core.messages import BaseMessage
+from __future__ import annotations
+
+import os
+import sqlite3
+import tempfile
+from typing import Annotated, Any, Dict, Optional, TypedDict
+
+from dotenv import load_dotenv
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.vectorstores import FAISS
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.tools import tool
 from langchain_groq import ChatGroq
+from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_community.tools import DuckDuckGoSearchRun
-from langchain_core.tools import tool
-from dotenv import load_dotenv
-import sqlite3
 import requests
 
 load_dotenv()
@@ -17,6 +26,10 @@ load_dotenv()
 
 llm = ChatGroq(
     model="llama-3.3-70b-versatile"
+)
+
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
 # ---------------- Tools ---------------- #

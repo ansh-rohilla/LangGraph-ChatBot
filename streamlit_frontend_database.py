@@ -1,18 +1,36 @@
-import streamlit as st
 import uuid
 
-from langgraph_database_backend import chatbot, retrieve_all_threads
+import streamlit as st
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from langchain_core.messages import (
-    HumanMessage,
-    AIMessage,
-    ToolMessage,
+from rag_backend import (
+    chatbot,
+    ingest_pdf,
+    retrieve_all_threads,
+    thread_document_metadata,
 )
 
 # *********************************** Utility Functions ******************************
 
 def generate_thread_id():
     return uuid.uuid4()
+
+def get_chat_title(thread_id):
+
+    conversation = load_conversation(thread_id)
+
+    for msg in conversation:
+
+        if msg["role"] == "user":
+
+            title = msg["content"].strip()
+
+            if len(title) > 35:
+                title = title[:35] + "..."
+
+            return title
+
+    return "New Chat"
 
 
 def add_thread(thread_id):
@@ -81,23 +99,90 @@ add_thread(st.session_state["thread_id"])
 
 # ******************************** Sidebar *********************************
 
-st.sidebar.title("LangGraph ChatBot")
+# ******************************** Sidebar ******************************** #
 
-if st.sidebar.button("➕ New Chat"):
+st.sidebar.title("📄 LangGraph PDF ChatBot")
+
+# Current thread
+st.sidebar.markdown(f"**Thread ID:** `{st.session_state['thread_id']}`")
+
+# ---------------- New Chat ---------------- #
+
+if st.sidebar.button("➕ New Chat", use_container_width=True):
     reset_chat()
+    st.rerun()
 
-st.sidebar.header("My Conversations")
+st.sidebar.divider()
 
-for thread_id in st.session_state["chat_threads"][::-1]:
+# ---------------- PDF Upload ---------------- #
 
-    title = st.session_state["chat_titles"].get(
-        thread_id,
-        "New Chat",
+metadata = thread_document_metadata(str(st.session_state["thread_id"]))
+
+if metadata:
+    st.sidebar.success(
+        f"""📄 **{metadata.get('filename')}**
+
+Pages: {metadata.get('documents')}
+
+Chunks: {metadata.get('chunks')}
+"""
+    )
+else:
+    st.sidebar.info("No PDF uploaded for this chat.")
+
+uploaded_pdf = st.sidebar.file_uploader(
+    "Upload PDF",
+    type=["pdf"],
+)
+
+if uploaded_pdf:
+
+    with st.sidebar.status(
+        "Indexing PDF...",
+        expanded=True,
+    ) as status:
+
+        summary = ingest_pdf(
+            uploaded_pdf.getvalue(),
+            thread_id=str(st.session_state["thread_id"]),
+            filename=uploaded_pdf.name,
+        )
+
+        status.update(
+            label="✅ PDF Indexed",
+            state="complete",
+            expanded=False,
+        )
+
+    st.sidebar.success(
+        f"Indexed **{summary['filename']}**"
     )
 
-    if st.sidebar.button(title, key=str(thread_id)):
-        st.session_state["thread_id"] = thread_id
-        st.session_state["message_history"] = load_conversation(thread_id)
+st.sidebar.divider()
+
+# ---------------- Previous Chats ---------------- #
+
+st.sidebar.subheader("💬 Previous Chats")
+
+threads = retrieve_all_threads()
+
+threads = list(dict.fromkeys(threads))
+
+threads.reverse()
+
+for thread in threads:
+
+    title = get_chat_title(thread)
+
+    if st.sidebar.button(
+        title,
+        key=f"thread-{thread}",
+        use_container_width=True,
+    ):
+
+        st.session_state["thread_id"] = thread
+        st.session_state["message_history"] = load_conversation(thread)
+
         st.rerun()
 
 
